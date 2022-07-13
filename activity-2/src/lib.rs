@@ -1,11 +1,19 @@
 use merlin::Transcript;
-use schnorrkel::vrf::VRFProof;
-use schnorrkel::vrf::{VRFInOut, VRFPreOut};
-use schnorrkel::{Keypair, PublicKey};
+use rand::Rng;
+use schnorrkel::{
+    vrf::VRFProof,
+    vrf::{VRFInOut, VRFPreOut},
+    Keypair, PublicKey,
+};
 
 fn generate_keypair() -> Keypair {
     let mut csprng = rand_core::OsRng;
     Keypair::generate_with(&mut csprng)
+}
+
+fn generate_seed() -> Vec<u8> {
+    let mut csprng = rand_core::OsRng;
+    csprng.gen_range(1_000..=1_000_000).to_string().into_bytes()
 }
 
 fn create_transcript(seed: &[u8]) -> Transcript {
@@ -53,12 +61,12 @@ mod tests {
     fn verifies() {
         let pair = generate_keypair();
 
-        let seed = b"12345";
-        let transcript = create_transcript(seed);
+        let seed = generate_seed();
+        let transcript = create_transcript(&seed);
         let (vrf_result, random_number) = generate(&pair, transcript);
 
         // Verify output, proof and compare with expected number generated
-        let verify_result = verify(seed, &pair.public, &vrf_result.output, &vrf_result.proof);
+        let verify_result = verify(&seed, &pair.public, &vrf_result.output, &vrf_result.proof);
         assert_eq!(random_number, verify_result.unwrap());
     }
 
@@ -66,13 +74,14 @@ mod tests {
     fn verify_fails_when_another_public_key_used() {
         let pair = generate_keypair();
 
-        let seed = b"12345";
-        let (result, _) = generate(&pair, create_transcript(seed));
+        let seed = generate_seed();
+        let (result, _) = generate(&pair, create_transcript(&seed));
 
         let another_pair = generate_keypair();
 
         // verify proof
-        let verification_result = verify(seed, &another_pair.public, &result.output, &result.proof);
+        let verification_result =
+            verify(&seed, &another_pair.public, &result.output, &result.proof);
         assert_eq!(None, verification_result)
     }
 
@@ -80,10 +89,10 @@ mod tests {
     fn highest_wins() {
         println!("HIGHEST CARD WINS!");
 
-        let mut rng = rand::thread_rng();
         const SYMBOL: &str = "DOT";
 
         // Generate keypairs and bets for a game
+        let mut rng = rand::thread_rng();
         let pairs: Vec<(Keypair, u64)> = (0..rng.gen_range(1..=10))
             .map(|_| (generate_keypair(), rng.gen_range(1..=100)))
             .collect();
@@ -94,20 +103,19 @@ mod tests {
         );
 
         // Generate a seed
-        let seed = rng.gen_range(1_000..=1_000_000).to_string();
-        let seed = seed.as_bytes();
+        let seed = generate_seed();
 
         // Use pairs to pull random numbers
         let mut results: Vec<(PublicKey, u64, u64)> = pairs
             .iter()
             // Generate random number for each pair using VRF
-            .map(|(pair, bet)| (pair, bet, generate(&pair, create_transcript(seed)).0))
+            .map(|(pair, bet)| (pair, bet, generate(&pair, create_transcript(&seed)).0))
             // Verify resulting outputs/proofs to determine random numbers
             .map(|(pair, bet, result)| {
                 (
                     pair.public,
                     bet,
-                    verify(seed, &pair.public, &result.output, &result.proof),
+                    verify(&seed, &pair.public, &result.output, &result.proof),
                 )
             })
             // Filter to only those which are valid
