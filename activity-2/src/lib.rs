@@ -22,10 +22,10 @@ fn create_transcript(seed: &[u8]) -> Transcript {
     transcript
 }
 
-fn generate(keypair: &Keypair, transcript: Transcript) -> (VRFResult, u64) {
+fn generate(keypair: &Keypair, transcript: Transcript) -> (VRFSignature, u64) {
     let (output, proof, _) = keypair.vrf_sign(transcript);
     (
-        VRFResult {
+        VRFSignature {
             output: output.to_preout(),
             proof,
         },
@@ -40,14 +40,16 @@ fn get_result(output: &VRFInOut) -> u64 {
     u64::from_le_bytes(result) % 52
 }
 
-fn verify(seed: &[u8], public_key: &PublicKey, out: &VRFPreOut, proof: &VRFProof) -> Option<u64> {
+fn verify(seed: &[u8], public_key: &PublicKey, signature: &VRFSignature) -> Option<u64> {
     let transcript = create_transcript(seed);
 
-    let (out, _) = public_key.vrf_verify(transcript, out, proof).ok()?;
+    let (out, _) = public_key
+        .vrf_verify(transcript, &signature.output, &signature.proof)
+        .ok()?;
     Some(get_result(&out))
 }
 
-pub struct VRFResult {
+pub struct VRFSignature {
     output: VRFPreOut,
     proof: VRFProof,
 }
@@ -63,10 +65,10 @@ mod tests {
 
         let seed = generate_seed();
         let transcript = create_transcript(&seed);
-        let (vrf_result, random_number) = generate(&pair, transcript);
+        let (signature, random_number) = generate(&pair, transcript);
 
         // Verify output, proof and compare with expected number generated
-        let verify_result = verify(&seed, &pair.public, &vrf_result.output, &vrf_result.proof);
+        let verify_result = verify(&seed, &pair.public, &signature);
         assert_eq!(random_number, verify_result.unwrap());
     }
 
@@ -75,13 +77,12 @@ mod tests {
         let pair = generate_keypair();
 
         let seed = generate_seed();
-        let (result, _) = generate(&pair, create_transcript(&seed));
+        let (signature, _) = generate(&pair, create_transcript(&seed));
 
         let another_pair = generate_keypair();
 
         // verify proof
-        let verification_result =
-            verify(&seed, &another_pair.public, &result.output, &result.proof);
+        let verification_result = verify(&seed, &another_pair.public, &signature);
         assert_eq!(None, verification_result)
     }
 
@@ -111,12 +112,8 @@ mod tests {
             // Generate random number for each pair using VRF
             .map(|(pair, bet)| (pair, bet, generate(&pair, create_transcript(&seed)).0))
             // Verify resulting outputs/proofs to determine random numbers
-            .map(|(pair, bet, result)| {
-                (
-                    pair.public,
-                    bet,
-                    verify(&seed, &pair.public, &result.output, &result.proof),
-                )
+            .map(|(pair, bet, signature)| {
+                (pair.public, bet, verify(&seed, &pair.public, &signature))
             })
             // Filter to only those which are valid
             .filter_map(|(pk, bet, result)| result.map(|r| (pk, *bet, r)))
